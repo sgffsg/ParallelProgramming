@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <string>
 #include "windows.h"
 #include <functional>
@@ -48,10 +48,10 @@ int main(int argc, char* argv[])
         for (int i = 0; i < threadsCount; i++)
         {
             threadNumbers[i] = i + 1;
-            std::cout << "Create thread#" << i+1 << std::endl;
+            std::cout << "Create thread#" << i + 1 << std::endl;
 
             handles[i] = CreateThread(nullptr, 0, &ThreadProc, &threadNumbers[i], CREATE_SUSPENDED, nullptr);
-            if (handles[i] == nullptr) 
+            if (handles[i] == nullptr)
             {
                 std::cout << "Failed to create thread#" << i + 1 << std::endl;
 
@@ -69,7 +69,7 @@ int main(int argc, char* argv[])
 
         WaitForMultipleObjects(threadsCount, handles, TRUE, INFINITE);
         std::cout << "All threads are finished" << std::endl;
-        
+
         for (int i = 0; i < threadsCount; i++)
         {
             CloseHandle(handles[i]);
