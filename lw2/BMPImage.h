@@ -111,11 +111,10 @@ public:
     int GetHeight() const { return height; }
 
 private:
+    int width, height;
     BMPFileHeader fileHeader;
     BMPInfoHeader infoHeader;
     std::vector<std::vector<Pixel>> pixels;
-    int width;
-    int height;
 
     void Load(const std::string& filePath)
     {
