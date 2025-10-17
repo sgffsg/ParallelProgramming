@@ -74,7 +74,7 @@ int main(const int argc, char** argv)
         bmpFile.Blur(args.threadCount);
         bmpFile.Save(args.outputFilePath);
 
-        std::cout << args.coreCount << '\t' << args.threadCount << '\t' << clock() - startTime << std::endl;
+        std::cout << "Threads: " << args.threadCount << '\n' << "Cores: " << args.coreCount << '\n' << "Time: " << clock() - startTime << std::endl;
     }
     catch (const std::exception& e) 
     {

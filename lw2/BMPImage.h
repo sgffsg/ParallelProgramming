@@ -46,10 +46,8 @@ public:
         Load(inputFilePath);
     }
 
-    void Blur(unsigned threadCount)
+    void Blur(unsigned threadCount = 1)
     {
-        if (threadCount == 0) threadCount = 1;
-
         std::vector<std::vector<Pixel>> tempPixels = pixels;
 
         std::vector<std::thread> threads;
@@ -189,7 +187,10 @@ private:
             }
         }
 
-        if (count == 0) return pixels[y][x];
+        if (count == 0)
+        {
+            return pixels[y][x];
+        }
 
         return Pixel{
             static_cast<uint8_t>(blue / count),
