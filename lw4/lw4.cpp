@@ -1,100 +1,279 @@
-﻿#include <format>
-#include <iostream>
+﻿#include <iostream>
+#include <memory>
 #include <string>
-#include <ctime>
-#include <fstream>
-#include "BmpImage.h" 
+#include <vector>
+#include <optional>
+#include <numeric>
 #include <functional>
+#include <chrono>
+#include <iomanip>
+#include <locale>
+#include <fstream>
+
+#include <tchar.h>
+#include <Windows.h>
+
+#include "BMPImage.h"
+
+using namespace std;
+using namespace bmp;
+
+using Threads = unique_ptr<HANDLE[]>;
+using GetEllapsedTimeFn = function<chrono::duration<double>()>;
 
 struct Args
 {
-    std::string inputFilePath;
-    std::string outputFilePath;
-    unsigned threadCount;
-    unsigned coreCount;
-    std::string logFilePath;
+    string inputFileName;
+    string outputFileName;
+    int coresCount;
+    int threadsCount;
+    vector<int> priority;
 };
 
-static Args ParseArgs(const int argc, char** argv)
+struct ProcessBitmapInfo
 {
-    Args args;
+    Bitmap* image;
+    unsigned lineNumber;
+    size_t lineHeight;
+    GetEllapsedTimeFn& getTime;
+};
 
-    if (argc == 2 && std::string(argv[1]) == "/?")
-    {
-        std::cout << "Usage: " << argv[0] << " <input.bmp> <output.bmp> <threads> <cores> [logfile.csv]" << std::endl;
-        std::cout << "Example: " << argv[0] << " input.bmp output.bmp 4 2 log.csv" << std::endl;
-        exit(0);
-    }
-
-    if (argc < 5 || argc > 6)
-    {
-        throw std::invalid_argument(std::format("Usage: {} <input.bmp> <output.bmp> <threads> <cores> [logfile.csv]", argv[0]));
-    }
-
-    args.inputFilePath = argv[1];
-    args.outputFilePath = argv[2];
-
-    try
-    {
-        args.threadCount = static_cast<unsigned>(std::stoi(argv[3]));
-        args.coreCount = static_cast<unsigned>(std::stoi(argv[4]));
-    }
-    catch (...)
-    {
-        throw std::invalid_argument("Failed to parse int value");
-    }
-
-    args.logFilePath = (argc == 6) ? argv[5] : "thread_log.csv";
-
-    return args;
-}
-
-void SetCoreCount(unsigned count)
+class comma_numpunct : public numpunct<char>
 {
-    SYSTEM_INFO info;
-    GetSystemInfo(&info);
-    unsigned maxCoreCount = info.dwNumberOfProcessors;
-
-    if (count == 0 || count > maxCoreCount)
+protected:
+    virtual char do_decimal_point() const
     {
-        count = maxCoreCount;
+        return ',';
     }
+};
 
-    HANDLE hProcess = GetCurrentProcess();
-    DWORD_PTR processAffinityMask = 0;
-    DWORD_PTR systemAffinityMask = 0;
-
-    if (GetProcessAffinityMask(hProcess, &processAffinityMask, &systemAffinityMask))
-    {
-        DWORD_PTR newMask = (1 << count) - 1;
-        newMask &= systemAffinityMask;
-        SetProcessAffinityMask(hProcess, newMask);
-    }
-}
+optional<Args> ParseArgs(int argc, char** argv);
+DWORD WINAPI BlurBitmap(CONST LPVOID lpParam);
+Threads CreateThreads(size_t count, function<ProcessBitmapInfo* (int)> dataCreatorFn);
+void SetCoresLimit(size_t limit);
+void SetNumbersDecimalPoint();
+GetEllapsedTimeFn StartTimer();
+int MapNumberToPriority(int number);
 
 int main(const int argc, char** argv)
 {
+    auto args = ParseArgs(argc, argv);
+
+    if (!args)
+    {
+        cout << "Params format: <input file name> <output file name> <cores count> <threads count>" << endl;
+        return -1;
+    }
+
     try
     {
-        auto args = ParseArgs(argc, argv);
-        SetCoreCount(args.coreCount);
+        SetCoresLimit(args->coresCount);
+        SetNumbersDecimalPoint();
+        auto getEllapsedTime = StartTimer();
+        Bitmap* image = new Bitmap(args->inputFileName);
+        unsigned lineHeight = image->height() / args->threadsCount;
 
-        const clock_t startTime = clock();
+        auto threads = CreateThreads(args->threadsCount, [lineHeight, image, &getEllapsedTime](unsigned threadNumber) {
+            return new ProcessBitmapInfo{
+                image,
+                threadNumber,
+                lineHeight,
+                getEllapsedTime
+            };
+            });
 
-        auto bmpFile = BMPImage(args.inputFilePath, args.logFilePath);
-        bmpFile.Blur(args.threadCount);
-        bmpFile.Save(args.outputFilePath);
+        for (int i = 0; i < args->threadsCount; i++)
+        {
+            SetThreadPriority(threads[i], MapNumberToPriority(args->priority[i]));
+        }
 
-        std::cout << "Threads: " << args.threadCount << '\n'
-            << "Cores: " << args.coreCount << '\n'
-            << "Time: " << clock() - startTime << " ms"
-            << std::endl;
+        for (int i = 0; i < args->threadsCount; i++)
+        {
+            ResumeThread(threads[i]);
+        }
+
+        WaitForMultipleObjects(args->threadsCount, threads.get(), true, INFINITE);
+
+        image->save(args->outputFileName);
+
+        cout << getEllapsedTime().count() << endl;
     }
-    catch (const std::exception& e)
+    catch (const bmp::Exception& e)
     {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
+        cout << "[BMP ERROR]: " << e.what() << endl;
+        return -1;
     }
 
     return 0;
+}
+
+optional<Args> ParseArgs(int argc, char** argv)
+{
+    constexpr int MIN_ARGS_COUNT = 5;
+
+    if (argc < MIN_ARGS_COUNT)
+    {
+        return nullopt;
+    }
+
+    Args result;
+
+    result.inputFileName = argv[1];
+    result.outputFileName = argv[2];
+
+    try
+    {
+        result.coresCount = stoi(argv[3]);
+        result.threadsCount = stoi(argv[4]);
+
+
+        if (argc < MIN_ARGS_COUNT + result.threadsCount)
+        {
+            return nullopt;
+        }
+
+        for (int i = 0; i < result.threadsCount; i++)
+        {
+            result.priority.push_back(stoi(argv[MIN_ARGS_COUNT + i]));
+        }
+    }
+    catch (...)
+    {
+        return nullopt;
+    }
+
+    return result;
+}
+
+Threads CreateThreads(size_t count, function<ProcessBitmapInfo* (int)> dataCreatorFn)
+{
+    auto threads = make_unique<HANDLE[]>(count);
+
+    for (unsigned i = 0; i < count; i++)
+    {
+        threads[i] = CreateThread(
+            NULL, 0, &BlurBitmap, dataCreatorFn(i), CREATE_SUSPENDED, NULL
+        );
+    }
+
+    return threads;
+}
+
+Pixel Average(vector<optional<Pixel>> const& v)
+{
+    auto const count = v.size();
+    int sumR = 0;
+    int sumG = 0;
+    int sumB = 0;
+    int pixelsCount = 0;
+
+    for (auto const& pixel : v)
+    {
+        if (!pixel)
+        {
+            continue;
+        }
+        pixelsCount++;
+        sumR += pixel->r;
+        sumG += pixel->g;
+        sumB += pixel->b;
+    }
+
+    return Pixel(sumR / pixelsCount, sumG / pixelsCount, sumB / pixelsCount);
+}
+
+Pixel GetAverageColor(Bitmap const& img, int x, int y)
+{
+    vector<optional<Pixel>> pixels = {
+        img.get(x, y),
+        img.get(x, y - 1),
+        img.get(x, y + 1),
+        img.get(x - 1, y),
+        img.get(x - 1, y - 1),
+        img.get(x - 1, y + 1),
+        img.get(x + 1, y),
+        img.get(x + 1, y - 1),
+        img.get(x + 1, y + 1),
+    };
+
+    return Average(pixels);
+}
+
+DWORD WINAPI BlurBitmap(CONST LPVOID lpParam)
+{
+    auto data = reinterpret_cast<ProcessBitmapInfo*>(lpParam);
+
+    ofstream output;
+    output.open("thread" + to_string(data->lineNumber) + ".txt");
+
+    unsigned startY = data->lineNumber * data->lineHeight;
+
+    auto image = data->image;
+    unsigned imageWidth = image->width();
+
+    for (unsigned i = 0; i < 21; i++)
+    {
+        for (unsigned y = startY; y < startY + data->lineHeight; ++y)
+        {
+            for (unsigned x = 0; x < imageWidth; ++x)
+            {
+                image->set(x, y, GetAverageColor(*image, x, y));
+            }
+        }
+        output << data->getTime().count() << endl;
+    }
+
+    output.close();
+
+    delete data;
+    ExitThread(0);
+}
+
+void SetNumbersDecimalPoint()
+{
+    locale comma_locale(locale(), new comma_numpunct());
+    cout.imbue(comma_locale);
+}
+
+void SetCoresLimit(size_t limit)
+{
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    size_t maxCoresCount = sysinfo.dwNumberOfProcessors;
+
+    if (limit > maxCoresCount)
+    {
+        cout << "Max cores count is " << maxCoresCount << endl;
+        limit = maxCoresCount;
+    }
+
+    auto procHandle = GetCurrentProcess();
+    DWORD_PTR mask = static_cast<DWORD_PTR>((pow(2, maxCoresCount) - 1) / pow(2, maxCoresCount - limit));
+
+    SetProcessAffinityMask(procHandle, mask);
+}
+
+GetEllapsedTimeFn StartTimer()
+{
+    chrono::steady_clock::time_point start = chrono::steady_clock::now();
+
+    return [start]()
+        {
+            return chrono::steady_clock::now() - start;
+        };
+}
+
+int MapNumberToPriority(int number)
+{
+    switch (number) {
+    case 0:
+        return THREAD_PRIORITY_BELOW_NORMAL;
+    case 1:
+        return THREAD_PRIORITY_NORMAL;
+    case 2:
+        return THREAD_PRIORITY_ABOVE_NORMAL;
+    default:
+        cout << "unknown priority value " << number << ", set to normal";
+        return THREAD_PRIORITY_NORMAL;
+    }
 }

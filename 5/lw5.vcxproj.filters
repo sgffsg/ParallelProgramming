@@ -15,10 +15,13 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="critical_section.cpp">
+    <ClCompile Include="base.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
     <ClCompile Include="mutex.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="critical.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
   </ItemGroup>

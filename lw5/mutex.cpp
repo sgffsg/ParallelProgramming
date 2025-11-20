@@ -1,113 +1,120 @@
 //#include <windows.h>
 //#include <string>
-//#include <fstream>
 //#include <iostream>
+//#include <functional>
+//#include <fstream>
 //
-//HANDLE FileMutex;
+//#include "tchar.h"
 //
-//int ReadFromFile()
-//{
-//    std::fstream myfile("balance.txt", std::ios_base::in);
-//    int result = 0;
-//    myfile >> result;
-//    myfile.close();
-//    return result;
+//using namespace std;
+//
+//constexpr size_t THREADS_COUNT = 50;
+//
+//HANDLE FileLockingMutex;
+//function<void()> fnToRunInMutex;
+//
+//void MutexActionRun() {
+//	fnToRunInMutex();
 //}
 //
-//void WriteToFile(int data)
-//{
-//    std::fstream myfile("balance.txt", std::ios_base::out);
-//    myfile << data << std::endl;
-//    myfile.close();
+//int DoInsideMutex() {
+//	DWORD dwCount = 0;
+//	WaitForSingleObject(FileLockingMutex, INFINITE);
+//
+//	fnToRunInMutex();
+//
+//	ReleaseMutex(FileLockingMutex);
+//	return TRUE;
 //}
 //
-//int GetBalance()
-//{
-//    WaitForSingleObject(FileMutex, INFINITE);
-//    int balance = ReadFromFile();
-//    ReleaseMutex(FileMutex);
-//    return balance;
+//int ReadFromFile() {
+//	int result;
+//
+//	std::fstream myfile("balance.txt", std::ios_base::in);
+//	myfile >> result;
+//	myfile.close();
+//
+//	return result;
 //}
 //
-//void Deposit(int money)
-//{
-//    WaitForSingleObject(FileMutex, INFINITE);
-//    int balance = ReadFromFile();
-//    balance += money;
-//    WriteToFile(balance);
-//    printf("Balance after deposit: %d\n", balance);
-//    ReleaseMutex(FileMutex);
+//void WriteToFile(int data) {
+//	std::fstream myfile("balance.txt", std::ios_base::out);
+//	myfile << data << std::endl;
+//	myfile.close();
 //}
 //
-//void Withdraw(int money)
-//{
-//    WaitForSingleObject(FileMutex, INFINITE);
-//    int balance = ReadFromFile();
+//int GetBalance() {
+//	int balance = ReadFromFile();
+//	return balance;
+//}
 //
-//    if (balance < money)
-//    {
-//        printf("Cannot withdraw money, balance lower than %d\n", money);
-//    }
-//    else
-//    {
-//        Sleep(20);
-//        balance -= money;
-//        WriteToFile(balance);
-//        printf("Balance after withdraw: %d\n", balance);
-//    }
-//    ReleaseMutex(FileMutex);
+//void Deposit(int money) {
+//	cout << money << endl;
+//	int balance = GetBalance();
+//	balance += money;
+//
+//	WriteToFile(balance);
+//	printf("Balance after deposit: %d\n", balance);
+//}
+//
+//void Withdraw(int money) {
+//	if (GetBalance() < money) {
+//		printf("Cannot withdraw money, balance lower than %d\n", money);
+//		return;
+//	}
+//
+//	Sleep(20);
+//	int balance = GetBalance();
+//
+//	balance -= money;
+//	WriteToFile(balance);
+//	printf("Balance after withdraw: %d\n", balance);
 //}
 //
 //DWORD WINAPI DoDeposit(CONST LPVOID lpParameter)
 //{
-//    Deposit(static_cast<int>(reinterpret_cast<intptr_t>(lpParameter)));
-//    return 0;
+//	fnToRunInMutex = [&lpParameter]() {
+//		Deposit((int)lpParameter);
+//		};
+//	return DoInsideMutex();
 //}
 //
 //DWORD WINAPI DoWithdraw(CONST LPVOID lpParameter)
 //{
-//    Withdraw(static_cast<int>(reinterpret_cast<intptr_t>(lpParameter)));
-//    return 0;
+//	fnToRunInMutex = [&lpParameter]() {
+//		Withdraw((int)lpParameter);
+//		};
+//	return DoInsideMutex();
 //}
 //
-//int main()
+//int _tmain(int argc, _TCHAR* argv[])
 //{
-//    HANDLE handles[50];
+//	HANDLE* handles = new HANDLE[THREADS_COUNT];
 //
-//    FileMutex = CreateMutex(NULL, FALSE, TEXT("Global\\BalanceFileMutex"));
+//	FileLockingMutex = CreateMutex(NULL, FALSE, L"file_locking_mutex");
 //
-//    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-//        printf("Another instance is already running\n");
-//    }
+//	if (FileLockingMutex == NULL)
+//	{
+//		printf("CreateMutex error: %d\n", GetLastError());
+//		return 1;
+//	}
 //
-//    // Инициализация файла должна быть защищена мьютексом
-//    WaitForSingleObject(FileMutex, INFINITE);
-//    WriteToFile(0);
-//    ReleaseMutex(FileMutex);
+//	WriteToFile(0);
 //
-//    for (int i = 0; i < 50; i++)
-//    {
-//        handles[i] = (i % 2 == 0)
-//            ? CreateThread(NULL, 0, &DoDeposit, reinterpret_cast<LPVOID>(230), 0, NULL)
-//            : CreateThread(NULL, 0, &DoWithdraw, reinterpret_cast<LPVOID>(1000), 0, NULL);
-//    }
+//	SetProcessAffinityMask(GetCurrentProcess(), 1);
+//	for (int i = 0; i < THREADS_COUNT; i++) {
+//		handles[i] = (i % 2 == 0)
+//			? CreateThread(NULL, 0, &DoDeposit, (LPVOID)230, CREATE_SUSPENDED, NULL)
+//			: CreateThread(NULL, 0, &DoWithdraw, (LPVOID)1000, CREATE_SUSPENDED, NULL);
+//		ResumeThread(handles[i]);
+//	}
 //
-//    WaitForMultipleObjects(50, handles, TRUE, INFINITE);
+//	WaitForMultipleObjects(50, handles, true, INFINITE);
+//	printf("Final Balance: %d\n", GetBalance());
 //
-//    // Финальное чтение баланса должно быть защищено
-//    WaitForSingleObject(FileMutex, INFINITE);
-//    printf("Final Balance: %d\n", GetBalance());
-//    ReleaseMutex(FileMutex);
+//	getchar();
 //
-//    for (int i = 0; i < 50; i++)
-//    {
-//        CloseHandle(handles[i]);
-//    }
+//	CloseHandle(FileLockingMutex);
 //
-//    CloseHandle(FileMutex);
-//
-//    printf("Press any key to exit...\n");
-//    char some;
-//    std::cin >> some;
-//    return 0;
+//	return 0;
 //}
